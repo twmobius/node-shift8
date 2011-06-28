@@ -13,3 +13,7 @@ Events emited:
 'connected':	When the library connects
 'disconnected':	When the library disconnects
 'error':	When an error occurs
+
+Asterisk has a bug on it's manager interface that normally crashes the node.js parser (thanks stagas). I've attached an 1.8.x patch on the repository and added a ticket on the asterisk issue system. 
+(https://issues.asterisk.org/jira/browse/ASTERISK-18064)
+
