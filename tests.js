@@ -15,11 +15,11 @@ t.on('connected', function() {
 });
 
 t.on('error', function( error ) {
-        console.log("FUCK: " + error);
+        console.log("Error: " + error);
 });
 
 t.on('event', function( event ) {
-        console.log("GOT EVENT");
+        console.log("Event");
         console.log(event);
 });
 
