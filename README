@@ -3,9 +3,7 @@ Requirements:
 libxmljs (npm install libxmljs)
 winston (npm install winston) - Might be removed in future versions.
 
-This is still a work in progress, see the tests.js for example on usage. Basic functionality for now, allowing to login, logoff and waitevent() from the library.
-
-All other actions must invoke send() directly. 
+This is still a work in progress, see the tests.js for example on usage.
 
 Events emited:
 

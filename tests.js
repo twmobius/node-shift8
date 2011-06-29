@@ -9,9 +9,12 @@ var t = new Shift8({
 });
 
 t.on('connected', function() {
-        console.log("Connected biatch");
+	t.waitEvent(true);
 
-        t.waitEvent(true);
+	t.ping(function( error, response ) {
+		console.log(error);
+		console.log(response);
+	});
 });
 
 t.on('error', function( error ) {
@@ -28,5 +31,3 @@ t.on('disconnected', function() {
 });
 
 t.login();
-
-
