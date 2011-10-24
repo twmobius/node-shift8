@@ -241,8 +241,6 @@ Shift8.prototype.waitEvent = function( perm ) {
 		}
 
 		for( var c in events ) {
-			console.log(events[c]);
-
 			self.emit('event', events[c]);
 
 			if( events[c].event == 'WaitEventComplete' && perm ) {
