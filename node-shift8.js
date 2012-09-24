@@ -6,83 +6,85 @@ var libxmljs = require("libxmljs");
 var winston = require('winston');
 
 Shift8 = function( options ) {
-	var self = this;
+  var self = this;
 
-	var options = options || {};
+  var options = options || {};
 
-	/**
-	 * The ip address of the remote asterisk server
-	 *
-	 * @var string
-	 */
-	this.server = options.server || null;
+  /**
+   * The ip address of the remote asterisk server
+   *
+   * @var string
+   */
+  this.server = options.server || null;
 
-	/**
-	 * The port on which the remote asterisk server is listening
-	 *
-	 * @var int
-	 */
-	this.port = options.port || 8088;
+  /**
+   * The port on which the remote asterisk server is listening
+   *
+   * @var int
+   */
+  this.port = options.port || 8088;
 
-	/**
-	 * The location of the AJAM interface on the remote server
-	 *
-	 * @var string
-	 */
-	this.ajam = options.ajam || '/mxml';
+  /**
+   * The location of the AJAM interface on the remote server
+   *
+   * @var string
+   */
+  this.ajam = options.ajam || '/mxml';
 
-	/**
-	 * The manager to use to connect with
-	 *
-	 * @var string
-	 */
-	this.manager = options.manager || null;
+  /**
+   * The manager to use to connect with
+   *
+   * @var string
+   */
+  this.manager = options.manager || null;
 
-	/**
-	 * The secret of the manager to connect with
-	 *
-	 * @var string
-	 */
-	this.secret = options.secret || null;
+  /**
+   * The secret of the manager to connect with
+   *
+   * @var string
+   */
+  this.secret = options.secret || null;
 
-	/**
-	 * Use https to connect to remote server
-	 *
-	 * @var boolean
-	 */
-	this.useHttps = options.useHttps || false;
+  /**
+   * Use https to connect to remote server
+   *
+   * @var boolean
+   */
+  this.useHttps = options.useHttps || false;
 
-	/**
-	 * The client to the remove AJAM interface
-	 *
-	 * @var object
-	 */
-	this.client;
+  /**
+   * The client to the remove AJAM interface
+   *
+   * @var object
+   */
+  this.client;
 
-	/**
-	 * The session id from the remote asterisk
-	 *
-	 * @var string
-	 */
-	this.sessionId;
+  /**
+   * The session id from the remote asterisk
+   *
+   * @var string
+   */
+  this.sessionId;
 
-	/**
-	 * The XML Parser
-	 *
-	 * @var object
-	 */
-	this.parser;
+  /**
+   * The XML Parser
+   *
+   * @var object
+   */
+  this.parser;
 
-	self.client = http.createClient(self.port, self.server, self.useHttps);
-	events.EventEmitter.call(this);
+  this.connected = (this.sessionId != null);
+
+  events.EventEmitter.call(this);
 };
 
 Shift8.super_ = events.EventEmitter;
+
 Shift8.prototype = Object.create(events.EventEmitter.prototype, {
-	constructor: {
-		value: Shift8,
-		enumerable: false
-	}
+  constructor: {
+    value: Shift8,
+    enumerable: false
+  }
 });
 
 module.exports = Shift8;
@@ -95,133 +97,172 @@ module.exports = Shift8;
  * @param function callback The callback function to execute on return
  */
 Shift8.prototype.send = function( parameters, callback ) {
-	var self = this;
+  var self = this;
 
-	var url = parameters.ajam || self.ajam;
+  var url = parameters.ajam || self.ajam;
 
-	url += "?";
+  url += "?";
 
-	for( var key in parameters ) {
-		url += key + "=" + encodeURIComponent(parameters[key]) + "&";
-	}
+  for( var key in parameters ) {
+    url += key + "=" + encodeURIComponent(parameters[key]) + "&";
+  }
 
-	winston.debug("Performing request on: " + url);
+  //winston.debug("Performing request on: " + url);
 
-	var request = self.client.request("GET", url, {
-		'Host':		self.server,
-		'Cookie':	(self.sessionId) ? "mansession_id=\"" + self.sessionId + "\"" : ""
-	});
+  var request = http.request({
+    host: self.server,
+    port: self.port,
+    path: url,
+    method: 'GET',
+    headers: {
+      'Host':    self.server,
+      'Cookie':  (self.sessionId) ? "mansession_id=\"" + self.sessionId + "\"" : ""
+    }
+  }, function(response) {
+    var buffer = [];
 
-	request.on('response', function(response) {
-		var buffer = [];
+    // Fix the XML a bit
+    buffer.push("<?xml version='1.0' encoding='UTF-8'?>");
 
-		// Fix the XML a bit
-		buffer.push("<?xml version='1.0' encoding='UTF-8'?>");
+    response.on('data', function(chunk) {
+      buffer.push(chunk);
+    });
 
-		response.on('data', function(chunk) {
-			buffer.push(chunk);
-		});
+    response.on('end', function() {
+      var cookie = response.headers['set-cookie'];
 
-		response.on('end', function() {
-			var cookie = response.headers['set-cookie'];
+      if (cookie) {
+        cookie = (cookie + "").split(";").shift()
 
-			if (cookie) {
-				cookie = (cookie + "").split(";").shift()
+        if( cookie ) {
+          self.sessionId = cookie.split("=").pop().replace(/"/g, "");
+        }            
+      }
 
-				if( cookie ) {
-					self.sessionId = cookie.split("=").pop().replace(/"/g, "");
-				}						
-			}
+      buffer = buffer.join("").replace(/\n/g, "");
+      //winston.debug(buffer);
 
-			buffer = buffer.join("").replace(/\n/g, "");
-			winston.debug(buffer);
+      try {
+        var xml = libxmljs.parseXmlString(buffer);
+      } catch( exception ) {
+        self.emit('error', "Unable to process response retrieved from the remote asterisk: " + exception);
 
-			try {
-				var xml = libxmljs.parseXmlString(buffer);
-			} catch( exception ) {
-				self.emit('error', "Unable to process response retrieved from the remote asterisk");
+        //winston.error("Unable to process response retrieved from the remote asterisk (" + exception + ")");
+        return;
+      }
 
-				winston.error("Unable to process response retrieved from the remote asterisk");
-				return;
-			}
+      var results = xml.find("///generic");
 
-			var results = xml.find("///generic");
+      // First in array is always the response to the command sent
+      if( results[0].attr('response') && results[0].attr('response').value() == 'Error') {
+        callback && callback( (results[0].attr('message')) ? results[0].attr('message').value() : "Unable to process command" );
+      }
+      else {
+        var events = [];
 
-			// First in array is always the response to the command sent
-			if( results[0].attr('response') && results[0].attr('response').value() == 'Error') {
-				callback && callback( (results[0].attr('message')) ? results[0].attr('message').value() : "Unable to process command" );
-			}
-			else {
-				var events = [];
+        for( var c in results ) {
+          var event = {};
 
-				for( var c in results ) {
-					var event = {};
+          var attributes = results[c].attrs();
 
-					var attributes = results[c].attrs();
+          for ( var i in attributes ) {
+            var variable = attributes[i].name();
+            event[variable] = attributes[i].value();
+          }
 
-					for ( var i in attributes ) {
-						var variable = attributes[i].name();
+          // Handle the AsyncAGI environment
+          if( event.event == 'AsyncAGI' && event.subevent == 'Start' && event.env != null ) {
+            var env = decodeURIComponent(event.env);
+            var lines = env.split("\n");
 
-						event[variable] = attributes[i].value();
-					}
+            var environment = {};
 
-					events.push(event);
-				}
+            for( i = 0; i < lines.length; i++ ) {
+              var data = lines[i].split(":");
 
-				callback && callback(null, events);
-			}
-		});
+              if( data.length != 2 )
+                continue;
 
-		response.on('error', function( error ) {
-			self.emit('error', "Unable to receive response from remote asterisk: " + error);
+              var variable = data[0];
+              environment[variable] = data[1].trim();
+            }
 
-			winston.error("Unable to receive response from remote asterisk: " + error);
-		});
-	});
+            event['environment'] = environment;
+          }
 
-	request.on('error', function(error) {
-		self.emit('error', "Unable to perform the request on the remote asterisk: " + error);
+          events.push(event);
+        }
 
-		winston.error("Unable to perform the request on the remote asterisk: " + error);
-	});
+        callback && callback(null, events);
+      }
+    });
 
-	request.end();
+    response.on('error', function( error ) {
+      self.emit('error', "Unable to receive response from remote asterisk: " + error);
+
+      //winston.error("Unable to receive response from remote asterisk: " + error);
+    });
+  });
+
+  request.on('error', function(error) {
+    self.emit('error', "Unable to perform the request on the remote asterisk: " + error);
+
+    //winston.error("Unable to perform the request on the remote asterisk: " + error);
+  });
+
+  request.end();
+};
+
+/**
+ * Kick a ConfBridge member
+ *
+ * @param string conference The conference id to kick the member of
+ * @param string channel The channel of the member to kick
+ * @param function callback The callback function if any to execute when the command has finished
+ *
+ */
+Shift8.prototype.kickConfBridgeMember = function( conference, channel, callback ) {
+  this.send({
+    'Action'     : 'ConfbridgeKick',
+    'Conference' : conference,
+    'Channel'    : channel
+  }, callback);
 };
 
 /**
  * Login to the remote asterisk's manager interface. Will emit the 'connected' event on connection
  */
 Shift8.prototype.login = function() {
-	var self = this;
+  var self = this;
 
-	self.send({
-		'Action':	'login',
-		'Username':	self.manager,
-		'Secret':	self.secret
-	}, function( error, response ) {
-		if( error ) {
-			self.emit('error', "Unable to connect to remote asterisk (" + error + ")");
-		}
-		else {
-			self.emit('connected');
-		}
-	});
+  self.send({
+    'Action':  'login',
+    'Username':  self.manager,
+    'Secret':  self.secret
+  }, function( error, response ) {
+    if( error ) {
+      self.emit('error', "Unable to connect to remote asterisk (" + error + ")");
+    }
+    else {
+      self.emit('connected');
+    }
+  });
 };
 
 /**
  * Logoffs from the remote asterisk's manager interface. Will emit the 'disconnected' event on completion
  */
 Shift8.prototype.logoff = function() {
-	this.send({
-		'Action':	'logoff'
-	}, function( error, response ) {
-		if( error ) {
-			self.emit('error', "Unable to connect to remote asterisk (" + error + ")");
-		}
-		else {
-			self.emit('disconnected');
-		}
-	});
+  this.send({
+    'Action':  'logoff'
+  }, function( error, response ) {
+    if( error ) {
+      self.emit('error', "Unable to connect to remote asterisk (" + error + ")");
+    }
+    else {
+      self.emit('disconnected');
+    }
+  });
 };
 
 /**
@@ -230,24 +271,24 @@ Shift8.prototype.logoff = function() {
  * @param boolean perm Whether the waitEvent is permanent. (On WaitEventComplete to fire a new event)
  */
 Shift8.prototype.waitEvent = function( perm ) {
-	var self = this;
+  var self = this;
 
-	this.send({
-		'Action':	'WaitEvent'
-	}, function( error, events ) {
-		if( error ) {
-			self.emit('error', error);
-			return;
-		}
+  this.send({
+    'Action':  'WaitEvent'
+  }, function( error, events ) {
+    if( error ) {
+      self.emit('error', error);
+      return;
+    }
 
-		for( var c in events ) {
-			self.emit('event', events[c]);
+    for( var c in events ) {
+      self.emit('event', events[c]);
 
-			if( events[c].event == 'WaitEventComplete' && perm ) {
-				self.waitEvent(perm);
-			}
-		}
-	});
+      if( events[c].event == 'WaitEventComplete' && perm ) {
+        self.waitEvent(perm);
+      }
+    }
+  });
 };
 
 /**
@@ -261,22 +302,22 @@ Shift8.prototype.waitEvent = function( perm ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.queueAddInterface = function( queue, interface, member, penalty, paused, callback ) {
-	var parameters = {
-		'Action':	'QueueAdd',
-		'Queue':	queue,
-		'Interface':	interface
-	};
+  var parameters = {
+    'Action':  'QueueAdd',
+    'Queue':  queue,
+    'Interface':  interface
+  };
 
-	if( member )
-		parameters.MemberName = member;
+  if( member )
+    parameters.MemberName = member;
 
-	if( penalty )
-		parameters.Penalty = penalty;
+  if( penalty )
+    parameters.Penalty = penalty;
 
-	if( paused )
-		parameters.Paused = 1;
+  if( paused )
+    parameters.Paused = 1;
 
-	this.send(parameters, callback);
+  this.send(parameters, callback);
 };
 
 /**
@@ -287,11 +328,11 @@ Shift8.prototype.queueAddInterface = function( queue, interface, member, penalty
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.queueRemoveInterface = function( queue, interface, callback ) {
-	this.send({
-		'Action':	'QueueRemove',
-		'Queue':	queue,
-		'Interface':	interface
-	}, callback);
+  this.send({
+    'Action':  'QueueRemove',
+    'Queue':  queue,
+    'Interface':  interface
+  }, callback);
 };
 
 /**
@@ -302,11 +343,11 @@ Shift8.prototype.queueRemoveInterface = function( queue, interface, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.changeQueuePaused = function( interface, paused, callback ) {
-	this.send({
-		'Action':	'QueuePause',
-		'Interface':	interface,
-		'Paused':	paused
-	}, callback);
+  this.send({
+    'Action':  'QueuePause',
+    'Interface':  interface,
+    'Paused':  paused
+  }, callback);
 };
 
 /**
@@ -316,7 +357,7 @@ Shift8.prototype.changeQueuePaused = function( interface, paused, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.pauseQueueInterface = function( interface, callback ) {
-	this.changeQueuePaused( interface, 1, callback );
+  this.changeQueuePaused( interface, 1, callback );
 };
 
 /**
@@ -326,7 +367,7 @@ Shift8.prototype.pauseQueueInterface = function( interface, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.unpauseQueueInterface = function( interface, callback ) {
-	this.changeQueuePaused( interface, 0, callback );
+  this.changeQueuePaused( interface, 0, callback );
 };
 
 /**
@@ -338,17 +379,17 @@ Shift8.prototype.unpauseQueueInterface = function( interface, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getQueueStatus = function( queue, member, callback ) {
-	var parameters = {
-		'Action': 'QueueStatus'
-	};
+  var parameters = {
+    'Action': 'QueueStatus'
+  };
 
-	if( queue )
-		parameters.Queue = queue;
+  if( queue )
+    parameters.Queue = queue;
 
-	if( member )
-		parameters.Member = member;
+  if( member )
+    parameters.Member = member;
 
-	this.send( parameters, callback );
+  this.send( parameters, callback );
 };
 
 /**
@@ -358,14 +399,14 @@ Shift8.prototype.getQueueStatus = function( queue, member, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getQueueSummary = function( queue, callback ) {
-	var parameters = {
-		'Action': 'QueueSummary'
-	};
+  var parameters = {
+    'Action': 'QueueSummary'
+  };
 
-	if( queue )
-		parameters.Queue = queue;
+  if( queue )
+    parameters.Queue = queue;
 
-	this.send(parameters, callback);
+  this.send(parameters, callback);
 };
 
 /**
@@ -373,9 +414,9 @@ Shift8.prototype.getQueueSummary = function( queue, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getAgents = function( callback ) {
-	this.send({
-		'Action': 'Agents'
-	}, callback);
+  this.send({
+    'Action': 'Agents'
+  }, callback);
 };
 
 /**
@@ -385,10 +426,10 @@ Shift8.prototype.getAgents = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getQueueRule = function( rule, callback ) {
-	this.send({
-		'Action': 'QueueRule',
-		'Rule'	: rule
-	}, callback);
+  this.send({
+    'Action': 'QueueRule',
+    'Rule'  : rule
+  }, callback);
 };
 
 /**
@@ -400,12 +441,12 @@ Shift8.prototype.getQueueRule = function( rule, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.setQueueMemberPenalty = function( member, queue, penalty, callback ) {
-	this.send({
-		'Action':		'QueuePenalty',
-		'Interface':		member,
-		'Queue'	:		queue,
-		'Penalty':		penalty
-	}, callback);
+  this.send({
+    'Action':    'QueuePenalty',
+    'Interface':    member,
+    'Queue'  :    queue,
+    'Penalty':    penalty
+  }, callback);
 };
 
 /**
@@ -413,9 +454,9 @@ Shift8.prototype.setQueueMemberPenalty = function( member, queue, penalty, callb
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getQueues = function( callback ) {
-	this.send({
-		'Action': 'Queues'
-	}, callback);
+  this.send({
+    'Action': 'Queues'
+  }, callback);
 };
 
 /**
@@ -429,14 +470,14 @@ Shift8.prototype.getQueues = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.addQueueLog = function( queue, unique_id, interface, event, message, callback ) {
-	this.send({
-		'Action':		'QueueLog',
-		'Queue'	:		queue,
-		'UniqueID':		unique_id,
-		'Interface':		interface,
-		'Event'	:		event,
-		'Message':		message
-	}, callback);
+  this.send({
+    'Action':    'QueueLog',
+    'Queue'  :    queue,
+    'UniqueID':    unique_id,
+    'Interface':    interface,
+    'Event'  :    event,
+    'Message':    message
+  }, callback);
 };
 
 
@@ -447,10 +488,10 @@ Shift8.prototype.addQueueLog = function( queue, unique_id, interface, event, mes
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getSipPeer = function( peer, callback ) {
-	this.send({
-		'Action': 'sipshowpeer',
-		'Peer'	: peer
-	}, callback);
+  this.send({
+    'Action': 'sipshowpeer',
+    'Peer'  : peer
+  }, callback);
 };
 
 /**
@@ -459,9 +500,9 @@ Shift8.prototype.getSipPeer = function( peer, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getSipPeers = function( callback ) {
-	this.send({
-		'Action': 'SipPeers'
-	}, callback);
+  this.send({
+    'Action': 'SipPeers'
+  }, callback);
 };
 
 /**
@@ -472,11 +513,11 @@ Shift8.prototype.getSipPeers = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.playDTMF = function( dtmf, channel, callback ) {
-	this.send({
-		'Action':	'PlayDTMF',
-		'Channel':	channel,
-		'Digit'	:	dtmf
-	}, callback);
+  this.send({
+    'Action':  'PlayDTMF',
+    'Channel':  channel,
+    'Digit'  :  dtmf
+  }, callback);
 };
 
 /**
@@ -486,10 +527,10 @@ Shift8.prototype.playDTMF = function( dtmf, channel, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.sentSIPNotify = function( channel, callback ) {
-	this.send({
-		'Action':	'SIPnotify',
-		'Channel':	channel
-	}, callback);
+  this.send({
+    'Action':  'SIPnotify',
+    'Channel':  channel
+  }, callback);
 };
 
 /**
@@ -498,9 +539,9 @@ Shift8.prototype.sentSIPNotify = function( channel, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getSipRegistry = function( callback ) {
-	this.send({
-		'Action': 'SIPshowregistry'
-	}, callback);
+  this.send({
+    'Action': 'SIPshowregistry'
+  }, callback);
 };
 
 /**
@@ -509,9 +550,9 @@ Shift8.prototype.getSipRegistry = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getVoicemailUsers = function( callback ) {
-	this.send({
-		'Action': 'VoicemailUsersList'
-	}, callback);
+  this.send({
+    'Action': 'VoicemailUsersList'
+  }, callback);
 };
 
 /**
@@ -520,9 +561,9 @@ Shift8.prototype.getVoicemailUsers = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getIAXPeers = function( callback ) {
-	this.send({
-		'Action': 'IAXpeers'
-	}, callback);
+  this.send({
+    'Action': 'IAXpeers'
+  }, callback);
 };
 
 /**
@@ -531,9 +572,9 @@ Shift8.prototype.getIAXPeers = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getIAXPeerList = function( callback ) {
-	this.send({
-		'Action': 'IAXpeerlist'
-	}, callback);
+  this.send({
+    'Action': 'IAXpeerlist'
+  }, callback);
 };
 
 /**
@@ -542,9 +583,9 @@ Shift8.prototype.getIAXPeerList = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getIAXNetStats = function( callback ) {
-	this.send({
-		'Action': 'IAXnetstats'
-	}, callback);
+  this.send({
+    'Action': 'IAXnetstats'
+  }, callback);
 };
 
 /**
@@ -554,10 +595,10 @@ Shift8.prototype.getIAXNetStats = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.unpauseMonitor = function( channel, callback ) {
-	this.send({
-		'Action':	'UnpauseMonitor',
-		'Channel':	channel
-	}, callback);
+  this.send({
+    'Action':  'UnpauseMonitor',
+    'Channel':  channel
+  }, callback);
 };
 
 /**
@@ -567,10 +608,10 @@ Shift8.prototype.unpauseMonitor = function( channel, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.pauseMonitor = function( channel, callback ) {
-	this.send({
-		'Action':	'PauseMonitor',
-		'Channel':	channel
-	}, callback);
+  this.send({
+    'Action':  'PauseMonitor',
+    'Channel':  channel
+  }, callback);
 };
 
 /**
@@ -581,11 +622,11 @@ Shift8.prototype.pauseMonitor = function( channel, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.changeMonitor = function( channel, file, callback ) {
-	this.send({
-		'Action':	'ChangeMonitor',
-		'Channel':	channel,
-		'File'	:	file
-	}, callback);
+  this.send({
+    'Action':  'ChangeMonitor',
+    'Channel':  channel,
+    'File'  :  file
+  }, callback);
 };
 
 /**
@@ -595,10 +636,10 @@ Shift8.prototype.changeMonitor = function( channel, file, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.stopMonitor = function( channel, callback ) {
-	this.send({
-		'Action':	'StopMonitor',
-		'Channel':	channel
-	}, callback);
+  this.send({
+    'Action':  'StopMonitor',
+    'Channel':  channel
+  }, callback);
 };
 
 /**
@@ -611,21 +652,21 @@ Shift8.prototype.stopMonitor = function( channel, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.monitor = function( channel, file, format, mix, callback ) {
-	var parameters = {
-		'Action':	'Monitor',
-		'Channel':	channel
-	};
+  var parameters = {
+    'Action':  'Monitor',
+    'Channel':  channel
+  };
 
-	if( file )
-		parameters.File = file;
+  if( file )
+    parameters.File = file;
 
-	if( format )
-		parameters.Format = format;
+  if( format )
+    parameters.Format = format;
 
-	if( mix )
-		parameters.Mix = 1;
+  if( mix )
+    parameters.Mix = 1;
 
-	this.send(parameters, callback);
+  this.send(parameters, callback);
 };
 
 /**
@@ -637,12 +678,12 @@ Shift8.prototype.monitor = function( channel, file, format, mix, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.sendMessageToJabberChannel = function( jabber, screenName, message, callback ) {
-	this.send({
-		'Action':	'JabberSend',
-		'Jabber':	jabber,
-		'ScreenName':	screenName,
-		'Message':	message
-	}, callback);
+  this.send({
+    'Action':  'JabberSend',
+    'Jabber':  jabber,
+    'ScreenName':  screenName,
+    'Message':  message
+  }, callback);
 };
 
 /**
@@ -654,12 +695,12 @@ Shift8.prototype.sendMessageToJabberChannel = function( jabber, screenName, mess
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.AGI = function( channel, command, command_id, callback ) {
-	this.send({
-		'Action':	'AGI',
-		'Channel':	channel,
-		'Command':	command,
-		'CommandID':	command_id
-	}, callback);
+  this.send({
+    'Action':  'AGI',
+    'Channel':  channel,
+    'Command':  command,
+    'CommandID':  command_id
+  }, callback);
 };
 
 /**
@@ -670,15 +711,15 @@ Shift8.prototype.AGI = function( channel, command, command_id, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.DBDelTree = function( family, key, callback ) {
-	var parameters = {
-		'Action':		'DBDelTree',
-		'Family':		family
-	};
+  var parameters = {
+    'Action':    'DBDelTree',
+    'Family':    family
+  };
 
-	if( key )
-		parameters.Key = key;
+  if( key )
+    parameters.Key = key;
 
-	this.send( parameters, callback );
+  this.send( parameters, callback );
 };
 
 /**
@@ -689,13 +730,13 @@ Shift8.prototype.DBDelTree = function( family, key, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.DBDel = function( family, key, callback ) {
-	this.send({
-		'Action':	'DBDel',
-		'Family':	family,
-		'Key'	:	key
-	}, callback);
+  this.send({
+    'Action':  'DBDel',
+    'Family':  family,
+    'Key'  :  key
+  }, callback);
 
-	this.send( parameters, callback );
+  this.send( parameters, callback );
 };
 
 /**
@@ -706,11 +747,11 @@ Shift8.prototype.DBDel = function( family, key, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.DBGet = function( family, key, callback ) {
-	this.send({
-		'Action':	'DBGet',
-		'Family':	family,
-		'Key'	:	key
-	}, callback);
+  this.send({
+    'Action':  'DBGet',
+    'Family':  family,
+    'Key'  :  key
+  }, callback);
 };
 
 /**
@@ -721,12 +762,12 @@ Shift8.prototype.DBGet = function( family, key, callback ) {
  * @param string value (Optional)
  */
 Shift8.prototype.DBPut = function( family, key, value, callback ) {
-	this.send({
-		'Action':	'DBPut',
-		'Family':	family,
-		'Key'	:	key,
-		'Val'	:	(value) ? value : ''
-	}, callback);
+  this.send({
+    'Action':  'DBPut',
+    'Family':  family,
+    'Key'  :  key,
+    'Val'  :  (value) ? value : ''
+  }, callback);
 };
 
 /**
@@ -738,16 +779,16 @@ Shift8.prototype.DBPut = function( family, key, value, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.bridge = function( channelA, channelB, callback ) {
-	var parameters = {
-		'Action':		'Bridge',
-		'Channel1':		channelA,
-		'Channel2':		channelB
-	};
+  var parameters = {
+    'Action':    'Bridge',
+    'Channel1':    channelA,
+    'Channel2':    channelB
+  };
 
-	if( tone )
-		parameters.Tone = tone;
+  if( tone )
+    parameters.Tone = tone;
 
-	this.send(parameters, callback);
+  this.send(parameters, callback);
 };
 
 /**
@@ -759,16 +800,16 @@ Shift8.prototype.bridge = function( channelA, channelB, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.park = function( channelA, channelB, timeout, callback ) {
-	var parameters = {
-		'Action':		'Bridge',
-		'Channel':		channelA,
-		'Channel2':		channelB
-	};
+  var parameters = {
+    'Action':    'Bridge',
+    'Channel':    channelA,
+    'Channel2':    channelB
+  };
 
-	if( timeout )
-		parameters.Timeout = timeout;
+  if( timeout )
+    parameters.Timeout = timeout;
 
-	this.send( parameters, callback );
+  this.send( parameters, callback );
 };
 
 /**
@@ -777,9 +818,9 @@ Shift8.prototype.park = function( channelA, channelB, timeout, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getParkedCalls = function( callback ) {
-	this.send({
-		'Action': 'ParkedCalls'
-	}, callback);
+  this.send({
+    'Action': 'ParkedCalls'
+  }, callback);
 };
 
 /**
@@ -788,9 +829,9 @@ Shift8.prototype.getParkedCalls = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getDialplan = function( callback ) {
-	this.send({
-		'Action': 'ShowDialPlan'
-	}, callback);
+  this.send({
+    'Action': 'ShowDialPlan'
+  }, callback);
 };
 
 /**
@@ -800,10 +841,10 @@ Shift8.prototype.getDialplan = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.isModuleLoaded = function( module, callback ) {
-	this.send({
-		'Action': 'ModuleCheck',
-		'Module': module
-	}, callback);
+  this.send({
+    'Action': 'ModuleCheck',
+    'Module': module
+  }, callback);
 };
 
 /**
@@ -815,18 +856,18 @@ Shift8.prototype.isModuleLoaded = function( module, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.loadModule = function( module, loadType, callback ) {
-	var parameters = {
-		'Action':		'ModuleLoad',
-		'LoadType':		loadType
-	};
+  var parameters = {
+    'Action':    'ModuleLoad',
+    'LoadType':    loadType
+  };
 
-	if( loadType != 'reload' && !module )
-		return false;
+  if( loadType != 'reload' && !module )
+    return false;
 
-	if( module )
-		parameters.Module = module;
+  if( module )
+    parameters.Module = module;
 
-	this.send( parameters, callback );
+  this.send( parameters, callback );
 };
 
 /**
@@ -835,9 +876,9 @@ Shift8.prototype.loadModule = function( module, loadType, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getActiveChannels = function( callback ) {
-	this.send({
-		'Action': 'CoreShowChannels'
-	}, callback);
+  this.send({
+    'Action': 'CoreShowChannels'
+  }, callback);
 };
 
 /**
@@ -847,9 +888,9 @@ Shift8.prototype.getActiveChannels = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.reload = function( callback ) {
-	this.send({
-		'Action': 'Reload'
-	}, callback);
+  this.send({
+    'Action': 'Reload'
+  }, callback);
 };
 
 /**
@@ -858,9 +899,9 @@ Shift8.prototype.reload = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getCoreStatusVariables = function( callback ) {
-	this.send({
-		'Action': 'CoreStatus'
-	}, callback);
+  this.send({
+    'Action': 'CoreStatus'
+  }, callback);
 };
 
 /**
@@ -869,9 +910,9 @@ Shift8.prototype.getCoreStatusVariables = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getCoreSettings = function( callback ) {
-	this.send({
-		'Action': 'CoreSettings'
-	}, callback);
+  this.send({
+    'Action': 'CoreSettings'
+  }, callback);
 }
 
 /**
@@ -883,10 +924,10 @@ Shift8.prototype.getCoreSettings = function( callback ) {
  * @todo This might need something more. Header1-N handling
  */
 Shift8.prototype.sendUserEvent = function( userEvent, callback ) {
-	this.send({
-		'Action':	'UserEvent',
-		'UserEvent':	userEvent
-	}, callback);
+  this.send({
+    'Action':  'UserEvent',
+    'UserEvent':  userEvent
+  }, callback);
 };
 
 /**
@@ -897,11 +938,11 @@ Shift8.prototype.sendUserEvent = function( userEvent, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.sendText = function( channel, message, callback ) {
-	this.send({
-		'Action':	'SendText',
-		'Channel':	channel,
-		'Message':	message
-	}, callback);
+  this.send({
+    'Action':  'SendText',
+    'Channel':  channel,
+    'Message':  message
+  }, callback);
 };
 
 /**
@@ -910,9 +951,9 @@ Shift8.prototype.sendText = function( channel, message, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.listCommands = function( callback ) {
-	this.send({
-		'Action': 'ListCommands'
-	}, callback);
+  this.send({
+    'Action': 'ListCommands'
+  }, callback);
 };
 
 /**
@@ -922,10 +963,10 @@ Shift8.prototype.listCommands = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getMailboxCount = function( mailbox, callback ) {
-	this.send({
-		'Action':	'MailboxCount',
-		'Mailbox':	mailbox
-	}, callback);
+  this.send({
+    'Action':  'MailboxCount',
+    'Mailbox':  mailbox
+  }, callback);
 };
 
 /**
@@ -935,10 +976,10 @@ Shift8.prototype.getMailboxCount = function( mailbox, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getMailboxStatus = function( mailbox, callback ) {
-	this.send({
-		'Action':	'MailboxStatus',
-		'Mailbox':	mailbox
-	}, callback);
+  this.send({
+    'Action':  'MailboxStatus',
+    'Mailbox':  mailbox
+  }, callback);
 };
 
 /**
@@ -949,9 +990,9 @@ Shift8.prototype.getMailboxStatus = function( mailbox, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.setAbsoluteTimeout = function( channel, timeout, callback ) {
-	this.send({
-		'Action': 'AbsoluteTimeout'
-	}, callback);
+  this.send({
+    'Action': 'AbsoluteTimeout'
+  }, callback);
 
 };
 
@@ -964,11 +1005,11 @@ Shift8.prototype.setAbsoluteTimeout = function( channel, timeout, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getExtensionState = function( exten, context, callback ) {
-	this.send({
-		'Action':	'ExtensionState',
-		'Exten'	:	exten,
-		'Context':	context
-	}, callback);
+  this.send({
+    'Action':  'ExtensionState',
+    'Exten'  :  exten,
+    'Context':  context
+  }, callback);
 };
 
 /**
@@ -978,10 +1019,10 @@ Shift8.prototype.getExtensionState = function( exten, context, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.executeCommand = function( command, callback ) {
-	this.send({
-		'Action':	'Command',
-		'Command':	command
-	}, callback);
+  this.send({
+    'Action':  'Command',
+    'Command':  command
+  }, callback);
 }
 
 /**
@@ -1002,59 +1043,59 @@ Shift8.prototype.executeCommand = function( command, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.originate = function( channel, context, exten, priority, application, data, timeout, callerID, variable, account, async, codecs, callback ) { 
-	if( exten && (!context || !priority) )
-		return false;
+  if( exten && (!context || !priority) )
+    return false;
 
-	if( context && (!exten || !priority) )
-		return false;
+  if( context && (!exten || !priority) )
+    return false;
 
-	if( priority && (!exten || !context) )
-		return false;
+  if( priority && (!exten || !context) )
+    return false;
 
-	if( data && !application )
-		return false;
+  if( data && !application )
+    return false;
 
-	var parameters = {
-		'Action':		'Originate',
-		'Channel':		channel
-	};
+  var parameters = {
+    'Action':    'Originate',
+    'Channel':    channel
+  };
 
-	if( exten )
-		parameters.Exten = exten;
+  if( exten )
+    parameters.Exten = exten;
 
-	if( context )
-		parameters.Context = context;
+  if( context )
+    parameters.Context = context;
 
-	if( priority )
-		parameters.Priority = priority;
+  if( priority )
+    parameters.Priority = priority;
 
-	if( application )
-		parameters.Application = application;
+  if( application )
+    parameters.Application = application;
 
-	if( data )
-		parameters.Data = data;
+  if( data )
+    parameters.Data = data;
 
-	if( timeout )
-		parameters.Timeout = timeout;
+  if( timeout )
+    parameters.Timeout = timeout;
 
-	if( callerID )
-		parameters.CallerID = callerID;
+  if( callerID )
+    parameters.CallerID = callerID;
 
-	if( variable )
-		parameters.Variable = variable;
+  if( variable )
+    parameters.Variable = variable;
 
-	if( account )
-		parameters.Account = account;
+  if( account )
+    parameters.Account = account;
 
-	if( async )
-		parameters.Async = 'true';
-	else
-		parameters.Async = 'false';
+  if( async )
+    parameters.Async = 'true';
+  else
+    parameters.Async = 'false';
 
-	if( codecs )
-		parameters.Codecs = codecs;
+  if( codecs )
+    parameters.Codecs = codecs;
 
-	this.send(parameters, callback);
+  this.send(parameters, callback);
 };
 
 /**
@@ -1067,13 +1108,13 @@ Shift8.prototype.originate = function( channel, context, exten, priority, applic
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.attendedTransfer = function( channel, exten, context, priority, callback ) {
-	this.send({
-		'Action':	'Atxfer',
-		'Channel':	channel,
-		'Exten'	:	exten,
-		'Context':	context,
-		'Priority':	priority
-	}, callback);
+  this.send({
+    'Action':  'Atxfer',
+    'Channel':  channel,
+    'Exten'  :  exten,
+    'Context':  context,
+    'Priority':  priority
+  }, callback);
 };
 
 /**
@@ -1082,7 +1123,7 @@ Shift8.prototype.attendedTransfer = function( channel, exten, context, priority,
  * @see redirect
  */
 Shift8.prototype.transfer = function( channel, extraChannel, exten, context, priority, callback ) {
-	self.redirect(channel, extraChannel, exten, context, priority, callback);
+  self.redirect(channel, extraChannel, exten, context, priority, callback);
 };
 
 /**
@@ -1096,18 +1137,18 @@ Shift8.prototype.transfer = function( channel, extraChannel, exten, context, pri
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.redirect = function( channel, extraChannel, exten, context, priority, callback ) {
-	var parameters = {
-		'Action':	'Redirect',
-		'Channel':	channel,
-		'Exten'	:	exten,
-		'Context':	context,
-		'Priority':	priority
-	};
+  var parameters = {
+    'Action':  'Redirect',
+    'Channel':  channel,
+    'Exten'  :  exten,
+    'Context':  context,
+    'Priority':  priority
+  };
 
-	if( extraChannel )
-		parameters.ExtraChannel = extraChannel;
+  if( extraChannel )
+    parameters.ExtraChannel = extraChannel;
 
-	this.send(parameters, callback);
+  this.send(parameters, callback);
 };
 
 /**
@@ -1117,10 +1158,10 @@ Shift8.prototype.redirect = function( channel, extraChannel, exten, context, pri
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.listCategories = function( filename, callback ) {
-	this.send({
-		'Action':	'ListCategories',
-		'Filename':	filename
-	}, callback);
+  this.send({
+    'Action':  'ListCategories',
+    'Filename':  filename
+  }, callback);
 };
 
 /**
@@ -1131,10 +1172,10 @@ Shift8.prototype.listCategories = function( filename, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.createConfigurationFile = function( filename, callback ) {
-	this.send({
-		'Action':	'CreateConfig',
-		'Filename':	filename
-	}, callback);
+  this.send({
+    'Action':  'CreateConfig',
+    'Filename':  filename
+  }, callback);
 };
 
 /**
@@ -1145,17 +1186,17 @@ Shift8.prototype.createConfigurationFile = function( filename, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getStatus = function( channel, variables, callback ) {
-	var parameters = {
-		'Action':		'Status'
-	};
+  var parameters = {
+    'Action':    'Status'
+  };
 
-	if( channel )
-		parameters.Channel = channel;
-		
-	if( variables )
-		parameters.Variables = variables;
-	
-	this.send(parameters, callback);
+  if( channel )
+    parameters.Channel = channel;
+    
+  if( variables )
+    parameters.Variables = variables;
+  
+  this.send(parameters, callback);
 };
 
 /**
@@ -1166,10 +1207,10 @@ Shift8.prototype.getStatus = function( channel, variables, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getConfigJson = function( filename, callback ) {
-	this.send({
-		'Action':	'GetConfigJSON',
-		'Filename':	filename
-	}, callback);
+  this.send({
+    'Action':  'GetConfigJSON',
+    'Filename':  filename
+  }, callback);
 };
 
 /**
@@ -1180,15 +1221,15 @@ Shift8.prototype.getConfigJson = function( filename, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getConfig = function( filename, category, callback ) {
-	var parameters = {
-		'Action':	'GetConfig',
-		'Filename':	filename
-	};
-	
-	if( category )
-		parameters.Category = category;
-	
-	this.send(parameters, callback);
+  var parameters = {
+    'Action':  'GetConfig',
+    'Filename':  filename
+  };
+  
+  if( category )
+    parameters.Category = category;
+  
+  this.send(parameters, callback);
 };
 
 /**
@@ -1199,15 +1240,15 @@ Shift8.prototype.getConfig = function( filename, category, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.getChannelVariable = function( variable, channel, callback ) {
-	var parameters = {
-		'Action':		'GetVar',
-		'Variable':		variable
-	};
-	
-	if( channel )
-		parameters.Channel = channel;
-		
-	this.send(parameters, callback);
+  var parameters = {
+    'Action':    'GetVar',
+    'Variable':    variable
+  };
+  
+  if( channel )
+    parameters.Channel = channel;
+    
+  this.send(parameters, callback);
 };
 
 /**
@@ -1219,16 +1260,16 @@ Shift8.prototype.getChannelVariable = function( variable, channel, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.setChannelVariable = function( variable, value, channel, callback ) {
-	var parameters = {
-		'Action':		'Setvar',
-		'Variable':		variable,
-		'Value'	:		value
-	};
+  var parameters = {
+    'Action':    'Setvar',
+    'Variable':    variable,
+    'Value'  :    value
+  };
 
-	if( channel ) 
-		parameters.Channel = channel;
+  if( channel ) 
+    parameters.Channel = channel;
 
-	this.send(parameters, callback);
+  this.send(parameters, callback);
 };
 
 /**
@@ -1238,10 +1279,10 @@ Shift8.prototype.setChannelVariable = function( variable, value, channel, callba
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.hangup = function( channel, callback ) {
-	this.send({
-		'Action':	'Hangup',
-		'Channel':	channel
-	}, callback);
+  this.send({
+    'Action':  'Hangup',
+    'Channel':  channel
+  }, callback);
 };
 
 /**
@@ -1250,10 +1291,10 @@ Shift8.prototype.hangup = function( channel, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.challenge = function( callback ) {
-	this.send({
-		'Action':	'Challenge',
-		'AuthType':	'MD5'
-	}, callback);
+  this.send({
+    'Action':  'Challenge',
+    'AuthType':  'MD5'
+  }, callback);
 };
 
 /**
@@ -1263,10 +1304,10 @@ Shift8.prototype.challenge = function( callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.events = function( eventMask, callback ) {
-	this.send({
-		'Action':	'Events',
-		'EventMask':	eventMask
-	}, callback);
+  this.send({
+    'Action':  'Events',
+    'EventMask':  eventMask
+  }, callback);
 };
 
 /**
@@ -1275,9 +1316,9 @@ Shift8.prototype.events = function( eventMask, callback ) {
  * @param function callback The callback function if any to execute when the command has finished
  */
 Shift8.prototype.ping = function( callback ) {
-	this.send({
-		'Action': 'ping'
-	}, callback);
+  this.send({
+    'Action': 'ping'
+  }, callback);
 };
 
 /**
@@ -1286,7 +1327,7 @@ Shift8.prototype.ping = function( callback ) {
  * @return string
  */
 Shift8.prototype.getSessionId = function() {
-	return self.sessionId;
+  return self.sessionId;
 };
 
 /**
@@ -1295,5 +1336,5 @@ Shift8.prototype.getSessionId = function() {
  * @param string cookie The cookie from an already established connection to a remote asterisk server
  */
 Shift8.prototype.setSessionId = function( sessionId ) {
-	self.sessionId = sessionId;
+  self.sessionId = sessionId;
 };
