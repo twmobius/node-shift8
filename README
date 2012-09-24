@@ -1,7 +1,12 @@
+Shift8 provides a simple mechanism over the AJAM asterisk interface. 
+Apart from the obvious reason of providing an easy way to talk with a remote asterisk server, the main benefit of having an intermediate library between a software and an Asterisk server, is mostly that you can isolate the remote Asterisk, protecting the credentials and the entire PBX
+
+And all of that with a twist of node.js
+
 Requirements:
 
-libxmljs (npm install libxmljs)
-winston (npm install winston) - Might be removed in future versions.
+libxmljs
+winston - Might be removed in future versions.
 
 This is still a work in progress, see the tests.js for example on usage.
 
@@ -12,4 +17,25 @@ Events emited:
 'disconnected':	When the library disconnects
 'error':	When an error occurs
 
-This has been tested and works properly on Asterisk 10.7.0
+This has been tested and works properly on Asterisk 10.7.0. Also in the last version there has been better support for the AsyncAGI command, as well as the new ConfBridge application of Asterisk 10
+
+How to enable manager interface on asterisk:
+
+You must initially enable the manager interface in the asterisk by editing asterisk/manager.conf. You need to set:
+
+enabled = yes
+webenabled = yes
+
+You also need to create a manager for Shift8 to connect with:
+
+[manager]
+secret = secret
+deny = 0.0.0.0/0.0.0.0
+permit = 127.0.0.1/255.255.255.0
+read = system,call,log,verbose,agent,user,config,dtmf,reporting,cdr,dialplan
+write = system,call,agent,user,config,command,reporting,originate
+
+(Make sure you permit the ip address where shift8 is running)
+
+Finally you must edit http.conf and enable it by setting "enable" attribute to yes.
+
