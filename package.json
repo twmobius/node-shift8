@@ -1,0 +1,17 @@
+{
+  "name": "node-shift8",
+  "description": "An asynchronous client library for Asterisk Manager API",
+  "version": "0.0.3",
+  "author": "Paris Stamatopoulos <mobius@foriamroot.org>",
+  "repository": {
+    "type": "git",
+    "url": "http://github.com/twmobius/node-shift8.git"
+  },
+  "keywords": ["asterisk", "manager api", "ajam", "telephony", "voip"],
+  "dependencies": {
+    "winston": "0.5.x",
+    "libxmljs": "0.5.4"
+  },
+  "main": "./node-shift8.js",
+  "engines": { "node": ">= 0.4.0" }
+}
