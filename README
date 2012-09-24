@@ -39,3 +39,6 @@ write = system,call,agent,user,config,command,reporting,originate
 
 Finally you must edit http.conf and enable it by setting "enable" attribute to yes.
 
+Installation
+
+Simple as nmp install node-shift8
