@@ -1,7 +1,7 @@
 {
   "name": "node-shift8",
   "description": "An asynchronous client library for Asterisk Manager API",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "author": "Paris Stamatopoulos <mobius@foriamroot.org>",
   "repository": {
     "type": "git",
