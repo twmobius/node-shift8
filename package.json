@@ -10,7 +10,7 @@
   "keywords": ["asterisk", "manager api", "ajam", "telephony", "voip"],
   "dependencies": {
     "winston": "0.5.x",
-    "libxmljs": "0.5.4"
+    "libxmljs": ">= 0.5.4"
   },
   "main": "./node-shift8.js",
   "engines": { "node": ">= 0.4.0" }
